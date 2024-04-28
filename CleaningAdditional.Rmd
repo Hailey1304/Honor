@@ -1,0 +1,94 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Library
+```{r}
+library(tidyverse)
+library(zoo)
+library(tidycensus)
+```
+
+# Cleaning Tax Data
+```{r}
+county_to_zip <- read_excel("./Data/COUNTY_ZIP_032024.xlsx")
+zip_to_cbsa <- read_csv("./Data/SelectedZip.csv")
+
+crosswalk <- inner_join(county_to_zip, zip_to_cbsa, by = "ZIP") |> 
+  mutate(State = state.name[match(crosswalk$USPS_ZIP_PREF_STATE, state.abb)]) |>
+  rename(tax_county = USPS_ZIP_PREF_CITY)
+selectedState <- state.name[match(crosswalk$USPS_ZIP_PREF_STATE, state.abb)] |> unique()
+
+
+Local_Pre_Covid <- na.locf(read_excel("./Data/Local_Pre_Covid.xlsx")) |>
+  filter(State %in% selectedState)
+
+Local_Pre_Covid <- Local_Pre_Covid |> mutate(
+  tax_county = str_to_upper(str_trim(gsub(" Boro| Twp", "", gsub("County", "", gsub("\\(.*\\)", "", `Taxing Jurisdiction`))))),
+  tax_rate = replace_na(as.numeric(gsub("\\D*((\\d+\\.\\d+)|(\\d+))\\%(.*)", "\\1", Resident)), 0)) |>
+  dplyr::select(State, tax_county, tax_rate)
+
+pre_covid_tax <- inner_join(Local_Pre_Covid, crosswalk) |> 
+  mutate(covid = 0)
+
+Local_Post_Covid <- na.locf(read_excel("./Data/Local_Post_Covid.xlsx")) |>
+  filter(State %in% selectedState)
+
+Local_Post_Covid <- Local_Post_Covid |> mutate(
+  tax_county = str_to_upper(str_trim(gsub(" Boro| Twp", "", gsub("County", "", gsub("\\(.*\\)", "", `Taxing Jurisdiction`))))),
+  tax_rate = replace_na(as.numeric(gsub("\\D*((\\d+\\.\\d+)|(\\d+))\\%(.*)", "\\1", `Resident Rate`)), 0)) |>
+  dplyr::select(State, tax_county, tax_rate)
+
+post_covid_tax <- inner_join(Local_Post_Covid, crosswalk) |> 
+  mutate(covid = 1)
+
+income_tax <- pre_covid_tax |>
+  add_row(post_covid_tax) |>
+  dplyr::select(CBSA, ZIP, tax_rate, covid) |>
+  rename(cbsa = CBSA, zip = ZIP) |>
+  mutate(zip = as.numeric(zip))
+
+write.csv(income_tax, "./Data/Tax/City_Income_Tax.csv", row.names = FALSE)
+```
+
+# Cleaning transportation data
+```{r}
+selectedZip <- read_csv("./Data/SelectedZip.csv") |> rename(GEO_ID = ZIP)
+
+transportation <- tibble(year = 2017:2022) |>
+  mutate(transport_data = map(year, ~get_acs(
+  geography = "zcta", year = .x,
+  variables = c("B08111_017", "B08111_019", "B08111_020", 
+                "B08119_029", "B08119_030", "B08119_031",
+                "B08119_032", "B08119_033", "B08119_034",
+                "B08119_035", "B08119_036", "B08141_016")))) |>
+  unnest(cols = transport_data) |>
+  dplyr::select(year, GEOID, variable, estimate) |>
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  filter(GEOID %in% selectedZip$ZIP) |>
+  mutate(
+    transport_citizenship_0 = B08111_017 + B08111_019,
+    transport_citizenship_1 = B08111_020,
+    transport_income_low = B08119_029 + B08119_030 + B08119_031 + B08119_032,
+    transport_income_mid = B08119_033 + B08119_034 + B08119_035,
+    transport_income_high = B08119_036,
+    transport_edu_low = B08141_016,
+    transport_edu_mid = B08141_016,
+    transport_edu_high = B08141_016,
+    GEO_ID = GEOID) |>
+  dplyr::select(year, GEO_ID, transport_citizenship_0, transport_citizenship_1,
+                transport_income_low, transport_income_mid, transport_income_high,
+                transport_edu_low, transport_edu_mid, transport_edu_high)
+
+transportation <- transportation |> 
+  pivot_longer(cols = -c(year, GEO_ID), names_to = "CONTROL", values_to = "transport") |>
+  mutate(CONTROL = str_trim(str_to_upper(gsub("transport_", "", CONTROL)))) |>
+  left_join(selectedZip, by = "GEO_ID") |>
+  rename(cbsa = CBSA) |>
+  mutate(GEO_ID = as.numeric(GEO_ID))
+
+transportation |> 
+  write.csv("./Data/Transportation/Transportation.csv", row.names = F)
+```
+

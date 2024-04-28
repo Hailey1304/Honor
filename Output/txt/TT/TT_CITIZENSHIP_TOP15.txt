@@ -1,0 +1,17 @@
+Variable		US		Foreign
+(Intercept)   		0.413***      		-0.804***     
+remote        		-0.466***     		-0.061***     
+covid         		0.067**       		0.011***      
+cbdlog        		0.053***      		-0.015***     
+comp          		0.037         		-0.01*        
+cable         		0.201***      		0.015***      
+sat           		-0.024        		-0.02***      
+transport     		0***          		0***          
+tax_rate      		0.016         		0.002         
+remote:covid  		0.043*        		0.007*        
+covid:comp    		0.087*        		0.004         
+covid:cable   		-0.065        		-0.004        
+covid:sat     		0.031         		0.007*        
+covid:tax_rate		0.365***      		0.022         
+15            		14043         		14043         
+16            		0.452         		0.562         

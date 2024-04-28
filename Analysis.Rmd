@@ -1,0 +1,400 @@
+---
+title: "`r basename(normalizePath('.'))` STAT 209"
+author: "Nam Nguyen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+fontsize: 12pt
+spacing: double
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = TRUE)
+```
+
+# Import Library
+
+```{r library}
+library(multilevel)
+library(tidyverse)
+library(xtable)
+library(lme4)
+library(broom.mixed)
+library(glmmTMB)
+library(r2mlm)
+library(tidycensus)
+
+italic <- function(x){
+  paste0('{\\emph{ ', x, '}}')
+}
+
+large <- function(x){
+  paste0('{\\Large{\\bfseries{', x, '}}}')
+}
+```
+
+# Import Additional Data Transportation Data
+
+```{r}
+transportation <- read_csv("./Data/Transportation/Transportation.csv")
+```
+
+```{r}
+income_tax <- read_csv("./Data/Tax/City_Income_Tax.csv") |>
+  mutate(cbsa = factor(cbsa), zip = factor(zip))
+```
+
+# Import Data
+
+```{r, eval = F}
+data_list <- c("INCOME", "EDU", "CITIZENSHIP")
+
+for (data_name in data_list) {
+  filename <- paste(
+    paste("TT", "TT", sep = "/"), 
+    data_name, "TOP15.", 
+    sep = "_")
+  
+  input_csv <- paste("./Data/", filename, "csv", sep = "")
+  output_tex <- paste("./Output/tex/", filename, "tex", sep = "")
+  output_txt <- paste("./Output/txt/", filename, "txt", sep = "")
+
+  data <- read_csv(input_csv)
+  data <- left_join(data, transportation, 
+                    by = c("GEO_ID", "cbsa", "year", "CONTROL"))
+  data <- data |> mutate(
+    target = TARGET,
+    cbdlog = dist_to_cbd,
+    zip = factor(GEO_ID),
+    cbsa = factor(cbsa),
+    control = factor(gsub(".*\\_", "", CONTROL)),
+    year = year,
+    comp = Computer,
+    cable = CableFiber,
+    sat = SatelliteInternet,
+    lag2 = LAG_2,
+    lag1 = LAG_1,
+    remote = REMOTE,
+    reppl = REMOTE_PPL) |>
+    dplyr::select(target, control, cbsa, zip, year, remote, reppl, 
+           sat, comp, cable, lag2, lag1, cbdlog, covid, transport)
+
+  data <- left_join(data, income_tax, by = c("cbsa", "covid", "zip")) |>
+    mutate(tax_rate = replace_na(tax_rate, 0))
+  
+  data <- data |> drop_na()
+  
+  data_stat <- data |>
+    filter(year == 2020) |>
+    summarize(targetMean2020 = mean(target),
+              targetSd2020 = sd(target),
+              remoteMean2020 = mean(remote),
+              remoteSd2020 = sd(remote),
+              repplMean2020 = mean(reppl),
+              repplSd2020 = sd(reppl),
+              compMean2020 = mean(comp),
+              compSd2020 = sd(comp),
+              satMean2020 = mean(sat),
+              satSd2020 = sd(sat),
+              cableMean2020 = mean(cable),
+              cableSd2020 = sd(cable),
+              cbdMean2020 = mean(cbdlog),
+              cbdSd2020 = sd(cbdlog),
+              transportMean2020 = mean(transport),
+              transportSd2020 = sd(transport))
+  
+  print(data_stat |>
+      pivot_longer(cols = everything(),
+                    names_pattern = "^([a-z]*)([M|S][a-z]*)2020$",
+                    names_to = c(".value", "Measure")) |>
+      pivot_longer(!Measure) |>
+      pivot_wider(names_from = "Measure", values_from = "value"))
+  
+  data_std <- data |>
+    mutate(
+        targetStd = 
+          (target - data_stat$targetMean2020)/data_stat$targetSd2020,
+        lag1Std = 
+          (lag1 - data_stat$targetMean2020)/data_stat$targetSd2020,
+        lag2Std = 
+          (lag2 - data_stat$targetMean2020)/data_stat$targetSd2020,
+        reppl = 
+          (reppl - data_stat$repplMean2020)/data_stat$repplSd2020,
+        remote = 
+          (remote - data_stat$remoteMean2020)/data_stat$remoteSd2020,
+        comp = 
+          (comp - data_stat$compMean2020)/data_stat$compSd2020,
+        cable = 
+          (cable - data_stat$cableMean2020)/data_stat$cableSd2020,
+        sat = 
+          (sat - data_stat$satMean2020)/data_stat$satSd2020,
+        cbdlog = 
+          (cbdlog - data_stat$cbdMean2020)/data_stat$cbdSd2020,
+        transport = 
+          (transport - data_stat$transportMean2020/data_stat$transportSd2020),
+        year = (year - 2020))
+        
+  groups <- data |> dplyr::select(control) |> distinct() |> pull()
+  
+  len <- length(groups)
+  
+  res <- vector("list", length = len)
+  
+  for (i in 1:len) {
+    control_filter <- groups[[i]]
+    
+    data_filter <- data_std |> 
+      filter(control == control_filter)
+      
+    model <- lme(targetStd ~ 
+                   remote + covid + cbdlog + 
+                   comp + cable + sat + 
+                   transport + tax_rate +
+                   covid:remote + covid:comp + 
+                   covid:cable + covid:sat +
+                   covid:tax_rate, 
+                random = ~ covid | cbsa,
+                data = data_filter,
+                control = lmeControl(opt = "optim"))
+    
+    res[[i]] <- rbind(model |> 
+      tidy(effects = "fixed") |> 
+      mutate(
+        present = paste(round(estimate, 3), 
+                        ifelse(p.value < 0.001, "***", 
+                        ifelse(p.value < 0.01, "**", 
+                        ifelse(p.value < 0.05, "*", ""))), sep = "")) |> 
+      column_to_rownames(var = "term") |>
+      dplyr::select(present) |>
+      setNames(c(str_to_title(control_filter))),
+      nobs(model),
+      round(r2mlm(model, F)$R2s[[5]], 3))
+  }
+  
+  table_res <- bind_cols(res)
+  
+  row_label <- c("Intercept", "Remote Score", "Covid", 
+                 "Distance to CBD", "Computer Utility", 
+                 "Cable Utility", "Internet Utility", 
+                 "Public Transport", "City Tax Rate",
+                 "Remote Score x Covid", "Computer x Covid", 
+                 "Cable x Covid","Internet x Covid",
+                 "City Tax x Covid",
+                 "Observations", "R Square")
+  
+  labeller <- switch(
+    data_name,
+    "INCOME" = list(
+      col = c("Variable", "Less Than $35k", "$35k to $75k", "High Than $75k"),
+      caption = "HLM Model Control for Income",
+      alignment = "|l|l|c|c|c|"),
+    "EDU" = list(
+      col = c("Variable", "High School", "College", "Post Graduate"),
+      caption = "HLM Model Control for Education",
+      alignment = "|l|l|c|c|c|"),
+    "CITIZENSHIP" = list(
+      col = c("Variable", "US", "Foreign"),
+      caption = "HLM Model Control for Citizenship",
+      alignment = "|l|l|c|c|"))
+
+  table_res <- rownames_to_column(table_res)
+  colnames(table_res) <- labeller$col
+  
+  write.table(table_res, output_txt,sep="\t",row.names=F)
+  
+  add_hline <- list(
+    pos = list(12), 
+    command = "\\hline\\hline\n")
+  
+  table_res |>
+    mutate(Variable = lapply(row_label, italic)) |>
+    xtable(align = labeller$alignment, 
+           sanitize.colnames.function = large,
+           caption = labeller$caption) |>
+    print(include.rownames = FALSE,
+          add.to.row = add_hline,
+          file = output_tex)
+  
+  write.matrix(table_res, output_txt, sep = "\t\t") 
+}
+```
+
+```{r, eval = F}
+data_list <- c("INCOME", "EDU", "CITIZENSHIP")
+
+len <- length(groups)
+  
+res <- vector("list", length = len)
+
+for (data_name in data_list) {
+  filename <- paste(
+    paste("SCP", "SCP", sep = "/"), 
+    data_name, "TOP15.", 
+    sep = "_")
+  
+  input_csv <- paste("./Data/", filename, "csv", sep = "")
+  output_tex <- paste("./Output/tex/", filename, "tex", sep = "")
+  output_txt <- paste("./Output/txt/", filename, "txt", sep = "")
+
+  data <- read_csv(input_csv)
+  data <- left_join(data, transportation, 
+                    by = c("GEO_ID", "cbsa", "year", "CONTROL"))
+  data <- data |> mutate(
+    target = TARGET,
+    cbdlog = dist_to_cbd,
+    zip = factor(GEO_ID),
+    cbsa = factor(cbsa),
+    control = factor(gsub(".*\\_", "", CONTROL)),
+    year = year,
+    comp = Computer,
+    cable = CableFiber,
+    sat = SatelliteInternet,
+    lag2 = LAG_2,
+    lag1 = LAG_1,
+    remote = REMOTE,
+    reppl = REMOTE_PPL) |>
+    dplyr::select(target, control, cbsa, zip, year, remote, reppl, 
+           sat, comp, cable, lag2, lag1, cbdlog, covid, transport)
+  
+  data <- left_join(data, income_tax, by = c("cbsa", "covid", "zip")) |>
+    mutate(tax_rate = replace_na(tax_rate, 0))
+  
+  data <- data |> drop_na()
+  
+  data_stat <- data |>
+    filter(year == 2020) |>
+    summarize(targetMean2020 = mean(target),
+              targetSd2020 = sd(target),
+              remoteMean2020 = mean(remote),
+              remoteSd2020 = sd(remote),
+              repplMean2020 = mean(reppl),
+              repplSd2020 = sd(reppl),
+              compMean2020 = mean(comp),
+              compSd2020 = sd(comp),
+              satMean2020 = mean(sat),
+              satSd2020 = sd(sat),
+              cableMean2020 = mean(cable),
+              cableSd2020 = sd(cable),
+              cbdMean2020 = mean(cbdlog),
+              cbdSd2020 = sd(cbdlog),
+              transportMean2020 = mean(transport),
+              transportSd2020 = sd(transport))
+  
+  print(data_stat |>
+      pivot_longer(cols = everything(),
+                    names_pattern = "^([a-z]*)([M|S][a-z]*)2020$",
+                    names_to = c(".value", "Measure")) |>
+      pivot_longer(!Measure) |>
+      pivot_wider(names_from = "Measure", values_from = "value"))
+  
+  data_std <- data |>
+    mutate(
+        target = ifelse(target == 1, 0.99999,
+                        ifelse(target == 0, 0.00001, target)),
+        targetStd = 
+          (target - data_stat$targetMean2020)/data_stat$targetSd2020,
+        lag1Std = 
+          (lag1 - data_stat$targetMean2020)/data_stat$targetSd2020,
+        lag2Std = 
+          (lag2 - data_stat$targetMean2020)/data_stat$targetSd2020,
+        reppl = 
+          (reppl - data_stat$repplMean2020)/data_stat$repplSd2020,
+        remote = 
+          (remote - data_stat$remoteMean2020)/data_stat$remoteSd2020,
+        comp = 
+          (comp - data_stat$compMean2020)/data_stat$compSd2020,
+        cable = 
+          (cable - data_stat$cableMean2020)/data_stat$cableSd2020,
+        sat = 
+          (sat - data_stat$satMean2020)/data_stat$satSd2020,
+        cbdlog = 
+          (cbdlog - data_stat$cbdMean2020)/data_stat$cbdSd2020,
+        transport = 
+          (transport - data_stat$transportMean2020/data_stat$transportSd2020),
+        year = (year - 2020))
+  
+  groups <- data |> dplyr::select(control) |> distinct() |> pull()
+  
+  len <- length(groups)
+  
+  res <- vector("list", length = len)
+  
+  for (i in 1:len) {
+    control_filter <- groups[[i]]
+    
+    data_filter <- data_std |> 
+      filter(control == control_filter)
+      
+    model <- glmmTMB(target ~ 
+                   remote + covid + cbdlog + 
+                   comp + cable + sat + 
+                   transport + tax_rate +
+                   covid:remote + covid:comp + 
+                   covid:cable + covid:sat +
+                   covid:transport + covid:tax_rate +
+                   (1 + covid | cbsa),
+                data = data_filter,
+                family = beta_family())
+    
+    res[[i]] <- rbind(model |> 
+      tidy(effects = "fixed") |> 
+      mutate(
+        present = paste(round(estimate, 3), 
+                        ifelse(p.value < 0.001, "***", 
+                        ifelse(p.value < 0.01, "**", 
+                        ifelse(p.value < 0.05, "*", ""))), sep = "")) |> 
+      column_to_rownames(var = "term") |>
+      dplyr::select(present) |>
+      setNames(c(str_to_title(control_filter))),
+      nobs(model))
+  }
+  
+  table_res <- bind_cols(res)
+  
+  row_label <- c("Intercept", "Remote Score", "Covid", 
+                 "Distance to CBD", "Computer Utility", 
+                 "Cable Utility", "Internet Utility", 
+                 "Public Transport", "City Tax Rate",
+                 "Remote Score x Covid", "Computer x Covid", 
+                 "Cable x Covid","Internet x Covid", 
+                 "Public Transport x Covid", "City Tax Rate x Covid",
+                 "Observations")
+  
+  labeller <- switch(
+    data_name,
+    "INCOME" = list(
+      col = c("Variable", "Less Than $35k", "$35k to $75k", "High Than $75k"),
+      caption = "Beta Regression Model Control for Income",
+      alignment = "|l|l|c|c|c|"),
+    "EDU" = list(
+      col = c("Variable", "High School", "College", "Post Graduate"),
+      caption = "Beta Regression Model Control for Education",
+      alignment = "|l|l|c|c|c|"),
+    "CITIZENSHIP" = list(
+      col = c("Variable", "US", "Foreign"),
+      caption = "Beta Regression Model Control for Citizenship",
+      alignment = "|l|l|c|c|"))
+
+  table_res <- rownames_to_column(table_res)
+  colnames(table_res) <- labeller$col
+  
+  write.table(table_res, output_txt,sep="\t",row.names=F)
+  
+  add_hline <- list(
+    pos = list(12), 
+    command = "\\hline\\hline\n")
+  
+  table_res |>
+    mutate(Variable = lapply(row_label, italic)) |>
+    xtable(align = labeller$alignment, 
+           sanitize.colnames.function = large,
+           caption = labeller$caption) |>
+    print(include.rownames = FALSE,
+          file = output_tex)
+  
+  write.matrix(rownames_to_column(table_res), output_txt, sep = "\t\t") 
+}
+```
+
+
+
+

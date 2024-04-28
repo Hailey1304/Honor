@@ -1,0 +1,17 @@
+rowname		Variable		High School		College		Post Graduate
+1              		(Intercept)    		0.865NA        		0.684***       		0.444***       
+2              		remote         		0.177NA        		-0.044         		0.012          
+3              		covid          		-0.13NA        		-0.024         		0.003          
+4              		cbdlog         		0.069NA        		0.094***       		0.134***       
+5              		comp           		-0.412NA       		-0.182**       		-0.184         
+6              		cable          		0.171NA        		0.032          		-0.02          
+7              		sat            		-0.136NA       		0.072**        		-0.183***      
+8              		transport      		0NA            		0**            		0**            
+9              		tax_rate       		-2.154NA       		-25.516        		-38.699        
+10             		remote:covid   		0.013NA        		0.091          		-0.004         
+11             		covid:comp     		0.026NA        		0.001          		0.119          
+12             		covid:cable    		-0.134NA       		-0.057         		-0.081         
+13             		covid:sat      		0.108NA        		-0.039         		0.207***       
+14             		covid:transport		0NA            		0              		0              
+15             		covid:tax_rate 		-4.087NA       		-3.218         		-0.57          
+16             		16             		1464           		1464           		1464           

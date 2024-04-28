@@ -1,0 +1,17 @@
+rowname		Variable		Less Than $35k		$35k to $75k		High Than $75k
+1              		(Intercept)    		0.404NA        		0.71***        		0.727***       
+2              		remote         		-0.222NA       		0.013          		0.305***       
+3              		covid          		-0.071NA       		0.069          		-0.168         
+4              		cbdlog         		0.107NA        		0.232***       		0.233***       
+5              		comp           		-0.258NA       		-0.639***      		-0.838***      
+6              		cable          		0.09NA         		0.361**        		0.218          
+7              		sat            		-0.083NA       		-0.158***      		0.089          
+8              		transport      		0NA            		0**            		0              
+9              		tax_rate       		1.783NA        		-52.472*       		-87.552***     
+10             		remote:covid   		0.223NA        		0.083          		-0.075         
+11             		covid:comp     		-0.462NA       		0.056          		0.26           
+12             		covid:cable    		0.35NA         		-0.064         		0.018          
+13             		covid:sat      		0.071NA        		0.134*         		-0.05          
+14             		covid:transport		0NA            		0              		0              
+15             		covid:tax_rate 		-0.807NA       		-1.613         		53.622**       
+16             		16             		1464           		1464           		1464           
